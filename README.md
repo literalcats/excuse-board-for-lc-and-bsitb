@@ -36,11 +36,11 @@ Open http://127.0.0.1:5000. Local admin login is `admin` / `admin123` (local onl
 (Manual alternative: New > Web Service, build `pip install -r requirements.txt`, start `gunicorn app:app`, and add env vars `SECRET_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`.)
 
 ## Things to know
-- **Data resets on redeploy.** Render's free plan has no permanent disk, and this uses a SQLite file. Fine for a prototype. For the super-app, switch to PostgreSQL (Render offers one).
+- **Database:** on Render the Blueprint creates a PostgreSQL database and sets `DATABASE_URL` for you, so data survives redeploys. On your laptop (no `DATABASE_URL`) it falls back to a local SQLite file. Check Render's current free-tier limits for Postgres; free databases may expire.
 - **The free plan sleeps** after inactivity, so the first visit can take ~50 seconds.
 - **Change the admin password** by editing the `ADMIN_PASSWORD` env var on Render.
 - **Edit the letter wording** in `build_letter()` in `app.py`. Preview and `.docx` both update.
 - **Edit colors** at the top of `static/style.css`.
 
 ## Ideas for phase 2
-Student accounts instead of codes, real file/PDF export, email notifications, rate limiting on the request form, PostgreSQL.
+Student accounts instead of codes, real file/PDF export, email notifications, rate limiting on the request form, 

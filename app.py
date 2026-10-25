@@ -17,8 +17,8 @@ from functools import wraps
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from flask import (Flask, abort, flash, g, redirect, render_template, request,
-                   send_file, session, url_for)
+from flask import (Flask, abort, flash, g, jsonify, redirect, render_template,
+                   request, send_file, send_from_directory, session, url_for)
 
 app = Flask(__name__)
 
@@ -28,19 +28,50 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-only-change-me")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
-# Where the SQLite file lives. (On Render's free plan this resets on redeploy.)
-DB_PATH = os.environ.get("DATABASE_PATH", "excuse.db")
+# DATABASE_URL set  -> use PostgreSQL (data survives redeploys; used on Render)
+# DATABASE_URL empty -> use a local SQLite file (easy testing on your laptop)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+DB_PATH = os.environ.get("DATABASE_PATH", "excuse.db")  # SQLite file name
+USE_PG = bool(DATABASE_URL)
 
 CATEGORIES = ["Illness", "Medical appointment", "Family emergency",
               "School activity", "Bereavement", "Other"]
 
 
 # -------------------------------------------------------------- DATABASE ----
+class DB:
+    """A tiny wrapper so the rest of the app doesn't care which database it
+    is talking to. SQLite writes placeholders as ?  while PostgreSQL uses %s,
+    so execute() swaps them automatically."""
+
+    def __init__(self):
+        if USE_PG:
+            import psycopg2                       # only needed on PostgreSQL
+            from psycopg2.extras import RealDictCursor
+            # RealDictCursor = rows behave like dicts: row["code"]
+            self.conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        else:
+            self.conn = sqlite3.connect(DB_PATH)
+            self.conn.row_factory = sqlite3.Row   # rows behave like dicts too
+
+    def execute(self, sql, params=()):
+        if USE_PG:
+            cur = self.conn.cursor()
+            cur.execute(sql.replace("?", "%s"), params)
+            return cur
+        return self.conn.execute(sql, params)
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+
 def get_db():
     """Open one DB connection per request and reuse it."""
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row  # lets us use row["column_name"]
+        g.db = DB()
     return g.db
 
 
@@ -54,10 +85,12 @@ def close_db(_exc):
 
 def init_db():
     """Create the tables if they don't exist yet."""
-    db = sqlite3.connect(DB_PATH)
-    db.executescript("""
+    # The only difference between the two databases: how auto-numbering is written.
+    pk = "SERIAL PRIMARY KEY" if USE_PG else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    db = DB()
+    db.execute(f"""
         CREATE TABLE IF NOT EXISTS letters (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            id            {pk},
             code          TEXT UNIQUE NOT NULL,   -- anonymous public ID
             student_name  TEXT NOT NULL,          -- PRIVATE (admin only)
             guardian_name TEXT NOT NULL,          -- PRIVATE (admin only)
@@ -70,13 +103,13 @@ def init_db():
             status        TEXT NOT NULL DEFAULT 'pending',  -- pending/approved/rejected
             archived      INTEGER NOT NULL DEFAULT 0,       -- 0 = active, 1 = archived
             created_at    TEXT NOT NULL
-        );
+        )""")
+    db.execute(f"""
         CREATE TABLE IF NOT EXISTS announcements (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         {pk},
             message    TEXT NOT NULL,
             created_at TEXT NOT NULL
-        );
-    """)
+        )""")
     db.commit()
     db.close()
 
@@ -266,8 +299,8 @@ def admin_panel():
         (archived,)).fetchall()
     # Little counters for the stat blocks at the top.
     counts = {s: db.execute(
-        "SELECT COUNT(*) FROM letters WHERE archived=0 AND status=?", (s,)
-    ).fetchone()[0] for s in ("pending", "approved", "rejected")}
+        "SELECT COUNT(*) AS n FROM letters WHERE archived=0 AND status=?", (s,)
+    ).fetchone()["n"] for s in ("pending", "approved", "rejected")}
     news = db.execute("SELECT * FROM announcements ORDER BY id DESC LIMIT 10").fetchall()
     return render_template("admin.html", letters=letters, counts=counts,
                            view=view, news=news)
@@ -352,6 +385,44 @@ def delete_announcement(news_id):
     db.execute("DELETE FROM announcements WHERE id=?", (news_id,))
     db.commit()
     return redirect(url_for("admin_panel"))
+
+
+# ------------------------------------------------------------ PWA ROUTES ----
+# These make the site installable ("Add to Home Screen").
+@app.route("/manifest.webmanifest")
+def manifest():
+    """The app's ID card: name, colors, icons. Browsers read this to offer install."""
+    return jsonify({
+        "name": "Excuse Letter Board",
+        "short_name": "Excuse Board",
+        "description": "Request and track excuse letters anonymously.",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",          # opens without the browser address bar
+        "background_color": "#1f2321",    # splash screen color (dark gray)
+        "theme_color": "#228b22",         # forest green
+        "icons": [
+            {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/icons/maskable-512.png", "sizes": "512x512",
+             "type": "image/png", "purpose": "maskable"},
+        ],
+    })
+
+
+@app.route("/sw.js")
+def service_worker():
+    """Service worker must be served from the site root so it covers every page.
+    no-cache makes sure browsers always check for a newer version."""
+    resp = send_from_directory(app.static_folder, "sw.js", mimetype="text/javascript")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.route("/offline")
+def offline():
+    """Page the service worker shows when there is no internet."""
+    return render_template("offline.html")
 
 
 # Create the tables when the app starts (also works under gunicorn on Render).

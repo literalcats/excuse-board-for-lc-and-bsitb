@@ -1,4 +1,9 @@
 # Render "Blueprint": tells Render how to build and run the app.
+# It also creates a PostgreSQL database and connects it automatically.
+databases:
+  - name: excuse-db
+    plan: free            # check Render's current free-tier limits/expiry
+
 services:
   - type: web
     name: excuse-board
@@ -9,6 +14,10 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.3
+      - key: DATABASE_URL      # filled in automatically from the database above
+        fromDatabase:
+          name: excuse-db
+          property: connectionString
       - key: SECRET_KEY        # signs login cookies; Render makes a random one
         generateValue: true
       - key: ADMIN_USERNAME

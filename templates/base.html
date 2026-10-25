@@ -6,6 +6,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Excuse Board{% endblock %}</title>
+  {# PWA: lets phones install the site as an app #}
+  <link rel="manifest" href="{{ url_for('manifest') }}">
+  <meta name="theme-color" content="#228b22">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {# Runs BEFORE the page paints so there's no dark/light flash. Dark is default. #}
   <script>
@@ -41,5 +45,11 @@
   </main>
 
   <script src="{{ url_for('static', filename='theme.js') }}"></script>
+  <script>
+    // Register the service worker (only works on https or localhost)
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  </script>
 </body>
 </html>

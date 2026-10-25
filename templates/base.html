@@ -11,9 +11,10 @@
   <meta name="theme-color" content="#228b22">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  {# Runs BEFORE the page paints so there's no dark/light flash. Dark is default.
-     (It's a file, not inline code, because our security policy blocks inline scripts.) #}
-  <script src="{{ url_for('static', filename='theme-init.js') }}"></script>
+  {# Runs BEFORE the page paints so there's no dark/light flash. Dark is default. #}
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -44,6 +45,11 @@
   </main>
 
   <script src="{{ url_for('static', filename='theme.js') }}"></script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script>
+    // Register the service worker (only works on https or localhost)
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  </script>
 </body>
 </html>

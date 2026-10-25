@@ -2,18 +2,14 @@
 // Ours is deliberately SAFE: it never stores pages (so private admin data and
 // fresh board content are never served stale). It only keeps style/script/icons
 // and an "offline" page for when there's no internet.
-const CACHE = "excuse-board-v2";          // bump this number if you change the list below
+const CACHE = "excuse-board-v1";          // bump this number if you change the list below
 const OFFLINE_URL = "/offline";
-const PRECACHE = [OFFLINE_URL, "/static/style.css", "/static/theme-init.js",
-                  "/static/theme.js", "/static/app.js", "/static/icons/icon-192.png"];
+const PRECACHE = [OFFLINE_URL, "/static/style.css", "/static/theme.js",
+                  "/static/icons/icon-192.png"];
 
-// On install: save the files above. Each one is added separately, so a single
-// failed file can't break the whole install.
+// On install: save the files above.
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((c) =>
-      Promise.all(PRECACHE.map((url) => c.add(url).catch(() => {}))))
-  );
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(PRECACHE)));
   self.skipWaiting();
 });
 
@@ -32,9 +28,7 @@ self.addEventListener("fetch", (event) => {
 
   // Page visits: always go to the network. If offline, show the offline page.
   if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req).catch(() => caches.match(OFFLINE_URL).then((r) => r || Response.error()))
-    );
+    event.respondWith(fetch(req).catch(() => caches.match(OFFLINE_URL)));
     return;
   }
 
@@ -43,13 +37,10 @@ self.addEventListener("fetch", (event) => {
   if (url.origin === location.origin && url.pathname.startsWith("/static/")) {
     event.respondWith(
       fetch(req).then((res) => {
-        // Only save good responses, so a 404/500 never gets cached.
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy));
         return res;
-      }).catch(() => caches.match(req).then((r) => r || Response.error()))
+      }).catch(() => caches.match(req))
     );
   }
 });

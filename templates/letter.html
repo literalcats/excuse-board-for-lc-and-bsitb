@@ -4,7 +4,7 @@
 <p class="noprint">
   <a class="btn" href="{{ url_for('admin_panel') }}">&larr; Back</a>
   <a class="btn primary" href="{{ url_for('download_letter', letter_id=row.id) }}">Download .docx</a>
-  <button class="btn" data-print>Print</button>
+  <button class="btn" onclick="window.print()">Print</button>
 </p>
 
 {# The paper. Text comes from build_letter() in app.py #}

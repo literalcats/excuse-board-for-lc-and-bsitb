@@ -42,6 +42,8 @@ Open http://127.0.0.1:5000. Local admin login is `admin` / `admin123` (local onl
 - **Edit the letter wording** in `build_letter()` in `app.py`. Preview and `.docx` both update.
 - **Edit colors** at the top of `static/style.css`.
 
+## Ideas for phase 2
+Student accounts instead of codes, real file/PDF export, email notifications, rate limiting on the request form, 
 ## Security notes (added in the hardening pass)
 - On Render the app **refuses to start** if `SECRET_KEY`, a strong `ADMIN_PASSWORD`, or `DATABASE_URL` is missing.
 - Login, request and track forms are rate limited (edit `LIMITS` in `app.py`). The limiter is in-memory per server process.

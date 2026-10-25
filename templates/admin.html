@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Admin panel{% endblock %}
+{% block content %}
+<h1>Admin panel</h1>
+
+{# Stat blocks (these get Google-style colors in light mode) #}
+<div class="stats">
+  <div class="stat s-pending"><b>{{ counts.pending }}</b> pending</div>
+  <div class="stat s-approved"><b>{{ counts.approved }}</b> approved</div>
+  <div class="stat s-rejected"><b>{{ counts.rejected }}</b> rejected</div>
+</div>
+
+<div class="tabs">
+  <a class="btn {{ 'primary' if view == 'active' }}" href="{{ url_for('admin_panel') }}">Active</a>
+  <a class="btn {{ 'primary' if view == 'archived' }}" href="{{ url_for('admin_panel', view='archived') }}">Archived</a>
+</div>
+
+{% macro action(letter_id, name, label, cls='') %}
+  {# Small helper: one POST button per action #}
+  <form method="post" action="{{ url_for('letter_action', letter_id=letter_id, action=name) }}" class="inline"
+        {% if name == 'delete' %}data-confirm="Delete permanently?"{% endif %}>
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <input type="hidden" name="view" value="{{ view }}">
+    <button class="btn small {{ cls }}" type="submit">{{ label }}</button>
+  </form>
+{% endmacro %}
+
+{% if letters %}
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Code</th><th>Student</th><th>Category</th><th>Dates</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for l in letters %}
+    <tr>
+      <td><b>{{ l.code }}</b></td>
+      <td>{{ l.student_name }}<br><span class="muted">c/o {{ l.guardian_name }}</span></td>
+      <td>{{ l.category }}</td>
+      <td>{{ l.absent_from|pretty_date }}{% if l.absent_to != l.absent_from %} – {{ l.absent_to|pretty_date }}{% endif %}</td>
+      <td><span class="badge {{ l.status }}">{{ l.status }}</span></td>
+      <td class="actions">
+        <a class="btn small" href="{{ url_for('view_letter', letter_id=l.id) }}">View</a>
+        <a class="btn small" href="{{ url_for('download_letter', letter_id=l.id) }}">.docx</a>
+        {% if view == 'active' %}
+          {% if l.status != 'approved' %}{{ action(l.id, 'approve', 'Approve', 'good') }}{% endif %}
+          {% if l.status != 'rejected' %}{{ action(l.id, 'reject', 'Reject') }}{% endif %}
+          {{ action(l.id, 'archive', 'Archive') }}
+        {% else %}
+          {{ action(l.id, 'restore', 'Restore') }}
+        {% endif %}
+        {{ action(l.id, 'delete', 'Delete', 'danger') }}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+  <p class="empty">No {{ view }} letters.</p>
+{% endif %}
+
+<h2>Announcements</h2>
+{% for n in news %}
+  <p>{{ n.message }} <span class="muted">{{ n.created_at }}</span>
+    <form method="post" action="{{ url_for('delete_announcement', news_id=n.id) }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="link" type="submit">remove</button>
+    </form></p>
+{% else %}
+  <p class="muted">None yet. Approving a letter creates one.</p>
+{% endfor %}
+{% endblock %}

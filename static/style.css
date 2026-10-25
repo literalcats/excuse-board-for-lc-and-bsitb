@@ -1,0 +1,110 @@
+/* ===== THEME COLORS =====
+   Everything below uses these variables, so changing a color here
+   changes it everywhere. Dark is the default. */
+:root, [data-theme="dark"] {
+  --bg: #1f2321;          /* dark gray */
+  --surface: #292f2c;
+  --border: #3a423e;
+  --text: #e3e8e5;        /* soft off-white, easy on the eyes */
+  --muted: #98a39d;
+  --accent: #228b22;      /* forest green */
+  --accent-text: #ffffff;
+  --pending: #b8962e;  --approved: #228b22;  --rejected: #a8473f;
+  --btn-bg: #2f3632;
+  --stat1: var(--surface); --stat2: var(--surface); --stat3: var(--surface);
+  --stat-text: var(--text);
+}
+[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #f6f7f8;
+  --border: #dadce0;
+  --text: #202124;
+  --muted: #5f6368;
+  --accent: #4285f4;      /* Google blue */
+  --accent-text: #ffffff;
+  --pending: #fbbc05;  --approved: #34a853;  --rejected: #ea4335;  /* yellow / green / red */
+  --btn-bg: #ffffff;
+  --stat1: #fbbc05; --stat2: #34a853; --stat3: #ea4335;
+  --stat-text: #202124;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+h1 { margin: .5rem 0; } .muted { color: var(--muted); font-size: .9rem; }
+
+/* top bar: in light mode it gets a 4-color Google-style strip */
+.topbar { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: space-between;
+  align-items: center; padding: .8rem 1rem; background: var(--surface);
+  border-bottom: 3px solid var(--accent); }
+[data-theme="light"] .topbar { border-image: linear-gradient(90deg,#4285f4 25%,#ea4335 25% 50%,#fbbc05 50% 75%,#34a853 75%) 1; }
+.brand { font-weight: 700; font-size: 1.15rem; color: var(--text); text-decoration: none; }
+nav { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; }
+nav a { color: var(--text); text-decoration: none; }
+nav a:hover { color: var(--accent); }
+
+/* buttons */
+.btn, button.ghost { display: inline-block; padding: .5rem 1rem; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--btn-bg); color: var(--text);
+  text-decoration: none; cursor: pointer; font: inherit; }
+.btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.btn.good { background: var(--approved); color: #fff; border-color: var(--approved); }
+.btn.danger { background: var(--rejected); color: #fff; border-color: var(--rejected); }
+.btn.small { padding: .2rem .6rem; font-size: .85rem; }
+button.link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+form.inline { display: inline; }
+
+/* flash messages */
+.flash { padding: .7rem 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border); background: var(--surface); }
+.flash.error { border-color: var(--rejected); } .flash.ok { border-color: var(--approved); }
+
+/* announcements */
+.announce { background: var(--surface); border-left: 5px solid var(--approved);
+  padding: .5rem 1rem; border-radius: 8px; margin: 1rem 0; }
+.announce p { margin: .3rem 0; }
+
+/* board cards */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+.card { background: var(--surface); border: 1px solid var(--border); border-top: 6px solid var(--muted);
+  border-radius: 10px; padding: 1rem; margin-top: 1rem; }
+.grid .card { margin-top: 0; }
+.card.status-pending { border-top-color: var(--pending); }
+.card.status-approved { border-top-color: var(--approved); }
+.card.status-rejected { border-top-color: var(--rejected); }
+.code { font: 700 1.3rem ui-monospace, Consolas, monospace; letter-spacing: .05em; }
+.card p { margin: .4rem 0; }
+.badge { display: inline-block; padding: .1rem .6rem; border-radius: 99px; font-size: .8rem; color: #fff; background: var(--muted); }
+.badge.pending { background: var(--pending); color: #202124; }
+.badge.approved { background: var(--approved); }
+.badge.rejected { background: var(--rejected); }
+.empty { padding: 2rem; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; margin-top: 1.5rem; }
+.bigcode { font: 700 2.4rem ui-monospace, Consolas, monospace; background: var(--surface);
+  border: 2px dashed var(--accent); border-radius: 12px; padding: 1rem; text-align: center; margin: 1.5rem 0; }
+
+/* forms */
+.form { display: grid; gap: 1rem; max-width: 620px; margin-top: 1rem; }
+.form.narrow { max-width: 360px; }
+label { display: grid; gap: .3rem; font-weight: 600; }
+input, select, textarea { padding: .6rem; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; }
+
+/* admin */
+.stats { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.stat { padding: 1rem 1.5rem; border-radius: 10px; border: 1px solid var(--border); color: var(--stat-text); }
+.stat b { font-size: 1.8rem; margin-right: .3rem; }
+.s-pending { background: var(--stat1); } .s-approved { background: var(--stat2); } .s-rejected { background: var(--stat3); }
+.tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.actions { display: flex; flex-wrap: wrap; gap: .3rem; }
+
+/* the letter "paper" (always white so it prints like a real letter) */
+.paper { background: #fff; color: #111; max-width: 700px; padding: 3rem; margin: 1rem 0;
+  border-radius: 4px; font-family: Georgia, "Times New Roman", serif; box-shadow: 0 2px 12px rgba(0,0,0,.35); }
+.paper .right { text-align: right; }
+.signs { display: flex; gap: 3rem; margin-top: 3rem; }
+@media print { .topbar, .noprint, .flash { display: none; } body { background: #fff; } .paper { box-shadow: none; } }

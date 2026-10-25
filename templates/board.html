@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Excuse Letter Board</h1>
+<p class="muted">Requests are shown anonymously. Use your code to find yours.</p>
+
+{# Announcements: this is where "approved" notices appear for everyone #}
+{% if news %}
+<section class="announce">
+  {% for n in news %}
+    <p><strong>{{ n.message }}</strong> <span class="muted">{{ n.created_at }}</span></p>
+  {% endfor %}
+</section>
+{% endif %}
+
+<p><a class="btn primary" href="{{ url_for('request_letter') }}">Request an excuse letter</a>
+   <a class="btn" href="{{ url_for('track') }}">Track my code</a></p>
+
+{% if cards %}
+<div class="grid">
+  {% for c in cards %}
+  <article class="card status-{{ c.status }}">
+    <div class="code">{{ c.code }}</div>
+    <span class="badge {{ c.status }}">{{ c.status }}</span>
+    <p>{{ c.category }}</p>
+    <p class="muted">
+      {{ c.absent_from|pretty_date }}{% if c.absent_to != c.absent_from %} – {{ c.absent_to|pretty_date }}{% endif %}
+    </p>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+  <p class="empty">Nothing on the board yet.</p>
+{% endif %}
+{% endblock %}

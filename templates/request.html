@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Request a letter{% endblock %}
+{% block content %}
+<h1>Request an excuse letter</h1>
+<p class="muted">Your name and reason are private. Only the admin sees them. The public board shows just a code.</p>
+
+<form method="post" class="form">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+
+  <label>Student name
+    <input name="student_name" maxlength="100" required value="{{ form.get('student_name','') }}"></label>
+  <label>Parent / guardian name
+    <input name="guardian_name" maxlength="100" required value="{{ form.get('guardian_name','') }}"></label>
+  <label>Address the letter to (e.g. "Prof. Santos")
+    <input name="addressed_to" maxlength="100" required value="{{ form.get('addressed_to','') }}"></label>
+
+  <label>Category (shown publicly)
+    <select name="category" required>
+      {% for c in categories %}
+        <option {{ 'selected' if form.get('category') == c }}>{{ c }}</option>
+      {% endfor %}
+    </select></label>
+
+  <label>Reason (private)
+    <textarea name="reason" rows="4" maxlength="1000" required>{{ form.get('reason','') }}</textarea></label>
+
+  <div class="row">
+    <label>Absent from <input type="date" name="absent_from" required value="{{ form.get('absent_from','') }}"></label>
+    <label>Absent until <input type="date" name="absent_to" required value="{{ form.get('absent_to','') }}"></label>
+    <label>Expected return <input type="date" name="return_date" required value="{{ form.get('return_date','') }}"></label>
+  </div>
+
+  <button class="btn primary" type="submit">Submit request</button>
+</form>
+{% endblock %}

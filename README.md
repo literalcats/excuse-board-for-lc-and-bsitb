@@ -41,6 +41,3 @@ Open http://127.0.0.1:5000. Local admin login is `admin` / `admin123` (local onl
 - **Change the admin password** by editing the `ADMIN_PASSWORD` env var on Render.
 - **Edit the letter wording** in `build_letter()` in `app.py`. Preview and `.docx` both update.
 - **Edit colors** at the top of `static/style.css`.
-
-## Ideas for phase 2
-Student accounts instead of codes, real file/PDF export, email notifications, rate limiting on the request form, 

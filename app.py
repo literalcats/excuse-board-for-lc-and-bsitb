@@ -9,34 +9,75 @@ Flow:
 """
 import io
 import os
+import re
 import secrets
 import sqlite3
 import hmac
-from datetime import datetime, date
+import threading
+import time
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from flask import (Flask, abort, flash, g, jsonify, redirect, render_template,
                    request, send_file, send_from_directory, session, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 
 # ---------------------------------------------------------------- CONFIG ----
 # Values come from environment variables so secrets never live in the code.
-# The fallbacks are ONLY for running on your own laptop.
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-only-change-me")
+# Render sets RENDER=true automatically, which is how we know we're "live".
+IS_PROD = os.environ.get("RENDER") == "true" or os.environ.get("PRODUCTION") == "1"
+
+DEV_SECRET = "dev-only-change-me"
+DEV_PASSWORD = "admin123"
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", DEV_SECRET)
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", DEV_PASSWORD)
+
 # DATABASE_URL set  -> use PostgreSQL (data survives redeploys; used on Render)
 # DATABASE_URL empty -> use a local SQLite file (easy testing on your laptop)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 DB_PATH = os.environ.get("DATABASE_PATH", "excuse.db")  # SQLite file name
 USE_PG = bool(DATABASE_URL)
 
+# FAIL FAST: when live, refuse to start with unsafe settings instead of
+# quietly running with a known password or an ephemeral database.
+if IS_PROD:
+    problems = []
+    if app.config["SECRET_KEY"] == DEV_SECRET:
+        problems.append("SECRET_KEY is not set")
+    if ADMIN_PASSWORD == DEV_PASSWORD or len(ADMIN_PASSWORD) < 8:
+        problems.append("ADMIN_PASSWORD is missing, default, or shorter than 8 chars")
+    if not USE_PG:
+        problems.append("DATABASE_URL is not set (data would be lost on redeploy)")
+    if problems:
+        raise RuntimeError("Unsafe production config: " + "; ".join(problems))
+    # Render sits behind a proxy; this makes request.remote_addr the REAL visitor IP
+    # (needed for rate limiting) and makes https detection work.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+# Cookie safety: JS can't read it, only sent to our site, only over https when live.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=IS_PROD,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+    MAX_CONTENT_LENGTH=64 * 1024,   # reject huge request bodies (64 KB is plenty)
+)
+
 CATEGORIES = ["Illness", "Medical appointment", "Family emergency",
               "School activity", "Bereavement", "Other"]
 
+# Rate limits: (max attempts, per how many seconds). Tune these for your campus.
+# Careful: many students may share one wifi/IP, so don't make them too strict.
+LIMITS = {
+    "login":   (10, 15 * 60),
+    "request": (15, 10 * 60),
+    "track":   (30, 10 * 60),
+}
 
 # -------------------------------------------------------------- DATABASE ----
 class DB:
@@ -114,8 +155,46 @@ def init_db():
     db.close()
 
 
+# Philippines has no daylight saving, so a fixed UTC+8 is always correct
+# (and needs no extra package). Render servers run on UTC, hence this.
+MANILA = timezone(timedelta(hours=8))
+
+
 def now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+    """Current time in Manila, as text."""
+    return datetime.now(MANILA).strftime("%Y-%m-%d %H:%M")
+
+
+def today():
+    return datetime.now(MANILA).date()
+
+
+# Control characters (like \x00 or \x0b, which sneak in when pasting from Word/PDF)
+# crash the .docx builder. We strip them but keep normal newlines.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def clean_text(value, maxlen=100, multiline=False):
+    """Make user text safe: remove control chars, trim, cap the length."""
+    value = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+    value = _CONTROL.sub("", value)
+    if not multiline:
+        value = " ".join(value.split())          # newlines/tabs -> single spaces
+    return value.strip()[:maxlen]
+
+
+def parse_date(value):
+    """'2026-10-26' -> date object, or None if it isn't a REAL date."""
+    try:
+        return date.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def safe_equal(a, b):
+    """Constant-time compare that doesn't crash on non-ASCII text
+    (hmac.compare_digest raises TypeError on str with é/ñ; bytes are fine)."""
+    return hmac.compare_digest((a or "").encode("utf-8"), (b or "").encode("utf-8"))
 
 
 def make_code(db):
@@ -143,9 +222,80 @@ app.jinja_env.globals["csrf_token"] = csrf_token
 @app.before_request
 def check_csrf():
     if request.method == "POST":
-        sent = request.form.get("csrf", "")
-        if not hmac.compare_digest(sent, session.get("csrf", "x")):
+        expected = session.get("csrf")
+        if not expected or not safe_equal(request.form.get("csrf", ""), expected):
             abort(400, "Invalid form token. Go back, refresh and try again.")
+
+
+# --- tiny in-memory rate limiter (no extra package needed) ---
+# Limitation: it lives in each server process and resets on restart. That's fine
+# for stopping guessing/spam; for the super-app use Redis-backed limiting.
+_hits = {}
+_hits_lock = threading.Lock()
+
+
+def too_many(bucket):
+    """Record this visit; return True if the visitor went over the limit."""
+    limit, window = LIMITS[bucket]
+    key = (bucket, request.remote_addr)
+    t = time.monotonic()
+    with _hits_lock:
+        recent = [x for x in _hits.get(key, []) if t - x < window]
+        over = len(recent) >= limit
+        if not over:
+            recent.append(t)
+        _hits[key] = recent
+        if len(_hits) > 5000:  # housekeeping so memory can't grow forever
+            for k in [k for k, v in _hits.items() if not v or t - v[-1] > 3600]:
+                del _hits[k]
+    return over
+
+
+def reset_rate_limits():
+    """Used by the tests."""
+    with _hits_lock:
+        _hits.clear()
+
+
+def rate_limit(bucket):
+    """Decorator: put under @app.route to limit POSTs on that route."""
+    def deco(view):
+        @wraps(view)
+        def wrapper(*args, **kwargs):
+            if request.method == "POST" and too_many(bucket):
+                abort(429, "Too many attempts. Please wait a few minutes and try again.")
+            return view(*args, **kwargs)
+        return wrapper
+    return deco
+
+
+@app.after_request
+def security_headers(resp):
+    """Extra browser protections added to every response."""
+    resp.headers["X-Content-Type-Options"] = "nosniff"        # don't guess file types
+    resp.headers["X-Frame-Options"] = "DENY"                  # can't be put in an <iframe>
+    resp.headers["Referrer-Policy"] = "same-origin"
+    # Only our own scripts/styles may run. (That's why there are no inline scripts.)
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; img-src 'self' data:; style-src 'self'; "
+        "script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+    if IS_PROD:
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000"
+    if request.path.startswith("/admin"):                     # never store admin pages
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.errorhandler(400)
+@app.errorhandler(404)
+@app.errorhandler(429)
+@app.errorhandler(500)
+def show_error(err):
+    """Friendly error pages instead of the ugly default."""
+    code = getattr(err, "code", 500)
+    msg = getattr(err, "description", "Something went wrong.") if code != 500 \
+        else "Something went wrong on our side. Please try again."
+    return render_template("error.html", code=code, message=msg), code
 
 
 def admin_required(view):
@@ -172,6 +322,12 @@ def pretty_date(value):
 def build_letter(row):
     """Builds the letter text from the template. Used by BOTH the on-screen
     preview and the .docx download, so they always match."""
+    # Clean again here so OLD rows saved before the fix can't crash the download.
+    row = {**dict(row),
+           "student_name": clean_text(row["student_name"]),
+           "guardian_name": clean_text(row["guardian_name"]),
+           "addressed_to": clean_text(row["addressed_to"]),
+           "reason": clean_text(row["reason"], 1000, multiline=True)}
     if row["absent_from"] == row["absent_to"]:
         when = pretty_date(row["absent_from"])
     else:
@@ -209,14 +365,22 @@ def board():
 
 
 @app.route("/request", methods=["GET", "POST"])
+@rate_limit("request")
 def request_letter():
     """Form where a viewer asks for an excuse letter."""
     if request.method == "POST":
         f = request.form
-        # Pull every field out and strip stray spaces.
-        data = {k: f.get(k, "").strip() for k in (
-            "student_name", "guardian_name", "addressed_to", "category",
-            "reason", "absent_from", "absent_to", "return_date")}
+        # Clean every field (strip control chars, trim, cap length).
+        data = {
+            "student_name": clean_text(f.get("student_name"), 100),
+            "guardian_name": clean_text(f.get("guardian_name"), 100),
+            "addressed_to": clean_text(f.get("addressed_to"), 100),
+            "category": clean_text(f.get("category"), 50),
+            "reason": clean_text(f.get("reason"), 1000, multiline=True),
+            "absent_from": clean_text(f.get("absent_from"), 10),
+            "absent_to": clean_text(f.get("absent_to"), 10),
+            "return_date": clean_text(f.get("return_date"), 10),
+        }
 
         # --- validation (never trust the browser) ---
         if not all(data.values()):
@@ -224,10 +388,25 @@ def request_letter():
             return render_template("request.html", categories=CATEGORIES, form=data)
         if data["category"] not in CATEGORIES:
             abort(400)
-        if data["absent_to"] < data["absent_from"] or data["return_date"] <= data["absent_to"]:
+
+        d_from = parse_date(data["absent_from"])
+        d_to = parse_date(data["absent_to"])
+        d_back = parse_date(data["return_date"])
+        if not (d_from and d_to and d_back):
+            flash("One of the dates isn't a valid date.", "error")
+            return render_template("request.html", categories=CATEGORIES, form=data)
+        if d_to < d_from or d_back <= d_to:
             flash("Check your dates: the return date must be after the last "
                   "day of absence.", "error")
             return render_template("request.html", categories=CATEGORIES, form=data)
+        if (d_to - d_from).days > 60 or not (
+                today() - timedelta(days=90) <= d_from <= today() + timedelta(days=180)):
+            flash("Those dates look unusual. Please double-check them.", "error")
+            return render_template("request.html", categories=CATEGORIES, form=data)
+
+        # Store the cleaned, normalized (YYYY-MM-DD) dates.
+        data["absent_from"], data["absent_to"], data["return_date"] = (
+            d_from.isoformat(), d_to.isoformat(), d_back.isoformat())
 
         db = get_db()
         code = make_code(db)
@@ -235,8 +414,8 @@ def request_letter():
             "INSERT INTO letters (code, student_name, guardian_name, addressed_to,"
             " category, reason, absent_from, absent_to, return_date, created_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (code, data["student_name"][:100], data["guardian_name"][:100],
-             data["addressed_to"][:100], data["category"], data["reason"][:1000],
+            (code, data["student_name"], data["guardian_name"],
+             data["addressed_to"], data["category"], data["reason"],
              data["absent_from"], data["absent_to"], data["return_date"], now()))
         db.commit()
         return redirect(url_for("submitted", code=code))
@@ -246,15 +425,18 @@ def request_letter():
 @app.route("/submitted/<code>")
 def submitted(code):
     """Shows the student their anonymous code - they must save it."""
+    if not re.fullmatch(r"EX-[A-Z2-9]{5}", code):   # only real-looking codes
+        abort(404)
     return render_template("submitted.html", code=code)
 
 
 @app.route("/track", methods=["GET", "POST"])
+@rate_limit("track")
 def track():
     """Student types their code to check the status."""
     result, searched = None, None
     if request.method == "POST":
-        searched = request.form.get("code", "").strip().upper()
+        searched = clean_text(request.form.get("code"), 12).upper()
         result = get_db().execute(
             "SELECT code, category, status, absent_from, absent_to, return_date "
             "FROM letters WHERE code=?", (searched,)).fetchone()
@@ -265,17 +447,21 @@ def track():
 
 # ----------------------------------------------------------- ADMIN ROUTES ----
 @app.route("/admin/login", methods=["GET", "POST"])
+@rate_limit("login")
 def login():
     if request.method == "POST":
         user = request.form.get("username", "")
         pw = request.form.get("password", "")
-        # compare_digest = safe comparison that resists timing attacks
-        ok = (hmac.compare_digest(user, ADMIN_USERNAME)
-              and hmac.compare_digest(pw, ADMIN_PASSWORD))
-        if ok:
+        # safe_equal = timing-attack-resistant compare that handles any characters.
+        # Both checks always run (no early exit) so timing reveals nothing.
+        user_ok = safe_equal(user, ADMIN_USERNAME)
+        pw_ok = safe_equal(pw, ADMIN_PASSWORD)
+        if user_ok and pw_ok:
             session.clear()           # fresh session after login
+            session.permanent = True  # expires after PERMANENT_SESSION_LIFETIME (8h)
             session["is_admin"] = True
             return redirect(url_for("admin_panel"))
+        app.logger.warning("Failed admin login from %s", request.remote_addr)
         flash("Wrong username or password.", "error")
     return render_template("login.html")
 
@@ -353,15 +539,21 @@ def letter_action(letter_id, action):
     """One route for all buttons: approve / reject / archive / restore / delete."""
     row = get_letter_or_404(letter_id)
     db = get_db()
+    # The exact text of this letter's public announcement (used to find/remove it).
+    notice = f'Excuse letter {row["code"]} has been APPROVED.'
 
     if action == "approve":
-        db.execute("UPDATE letters SET status='approved' WHERE id=?", (letter_id,))
-        # This is the "notify the student and the whole website" part:
-        db.execute("INSERT INTO announcements (message, created_at) VALUES (?,?)",
-                   (f'Excuse letter {row["code"]} has been APPROVED.', now()))
-        flash(f'{row["code"]} approved and announced on the board.', "ok")
+        if row["status"] == "approved":
+            flash(f'{row["code"]} is already approved.', "ok")   # double-click safe
+        else:
+            db.execute("UPDATE letters SET status='approved' WHERE id=?", (letter_id,))
+            db.execute("INSERT INTO announcements (message, created_at) VALUES (?,?)",
+                       (notice, now()))
+            flash(f'{row["code"]} approved and announced on the board.', "ok")
     elif action == "reject":
         db.execute("UPDATE letters SET status='rejected' WHERE id=?", (letter_id,))
+        # If it was announced as approved before, take that notice down.
+        db.execute("DELETE FROM announcements WHERE message=?", (notice,))
         flash(f'{row["code"]} rejected.', "ok")
     elif action == "archive":
         db.execute("UPDATE letters SET archived=1 WHERE id=?", (letter_id,))
@@ -371,11 +563,14 @@ def letter_action(letter_id, action):
         flash(f'{row["code"]} restored.', "ok")
     elif action == "delete":
         db.execute("DELETE FROM letters WHERE id=?", (letter_id,))
+        db.execute("DELETE FROM announcements WHERE message=?", (notice,))
         flash(f'{row["code"]} permanently deleted.', "ok")
     else:
         abort(404)
     db.commit()
-    return redirect(request.referrer or url_for("admin_panel"))
+    # Go back to the tab the admin was on (a fixed list, never a user-supplied URL).
+    view = "archived" if request.form.get("view") == "archived" else "active"
+    return redirect(url_for("admin_panel", view=view))
 
 
 @app.route("/admin/announcement/<int:news_id>/delete", methods=["POST"])
@@ -396,6 +591,7 @@ def manifest():
         "name": "Excuse Letter Board",
         "short_name": "Excuse Board",
         "description": "Request and track excuse letters anonymously.",
+        "id": "/",
         "start_url": "/",
         "scope": "/",
         "display": "standalone",          # opens without the browser address bar

@@ -28,50 +28,19 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-only-change-me")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
-# DATABASE_URL set  -> use PostgreSQL (data survives redeploys; used on Render)
-# DATABASE_URL empty -> use a local SQLite file (easy testing on your laptop)
-DATABASE_URL = os.environ.get("DATABASE_URL")
-DB_PATH = os.environ.get("DATABASE_PATH", "excuse.db")  # SQLite file name
-USE_PG = bool(DATABASE_URL)
+# Where the SQLite file lives. (On Render's free plan this resets on redeploy.)
+DB_PATH = os.environ.get("DATABASE_PATH", "excuse.db")
 
 CATEGORIES = ["Illness", "Medical appointment", "Family emergency",
               "School activity", "Bereavement", "Other"]
 
 
 # -------------------------------------------------------------- DATABASE ----
-class DB:
-    """A tiny wrapper so the rest of the app doesn't care which database it
-    is talking to. SQLite writes placeholders as ?  while PostgreSQL uses %s,
-    so execute() swaps them automatically."""
-
-    def __init__(self):
-        if USE_PG:
-            import psycopg2                       # only needed on PostgreSQL
-            from psycopg2.extras import RealDictCursor
-            # RealDictCursor = rows behave like dicts: row["code"]
-            self.conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-        else:
-            self.conn = sqlite3.connect(DB_PATH)
-            self.conn.row_factory = sqlite3.Row   # rows behave like dicts too
-
-    def execute(self, sql, params=()):
-        if USE_PG:
-            cur = self.conn.cursor()
-            cur.execute(sql.replace("?", "%s"), params)
-            return cur
-        return self.conn.execute(sql, params)
-
-    def commit(self):
-        self.conn.commit()
-
-    def close(self):
-        self.conn.close()
-
-
 def get_db():
     """Open one DB connection per request and reuse it."""
     if "db" not in g:
-        g.db = DB()
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row  # lets us use row["column_name"]
     return g.db
 
 
@@ -85,12 +54,10 @@ def close_db(_exc):
 
 def init_db():
     """Create the tables if they don't exist yet."""
-    # The only difference between the two databases: how auto-numbering is written.
-    pk = "SERIAL PRIMARY KEY" if USE_PG else "INTEGER PRIMARY KEY AUTOINCREMENT"
-    db = DB()
-    db.execute(f"""
+    db = sqlite3.connect(DB_PATH)
+    db.executescript("""
         CREATE TABLE IF NOT EXISTS letters (
-            id            {pk},
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
             code          TEXT UNIQUE NOT NULL,   -- anonymous public ID
             student_name  TEXT NOT NULL,          -- PRIVATE (admin only)
             guardian_name TEXT NOT NULL,          -- PRIVATE (admin only)
@@ -103,13 +70,13 @@ def init_db():
             status        TEXT NOT NULL DEFAULT 'pending',  -- pending/approved/rejected
             archived      INTEGER NOT NULL DEFAULT 0,       -- 0 = active, 1 = archived
             created_at    TEXT NOT NULL
-        )""")
-    db.execute(f"""
+        );
         CREATE TABLE IF NOT EXISTS announcements (
-            id         {pk},
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
             message    TEXT NOT NULL,
             created_at TEXT NOT NULL
-        )""")
+        );
+    """)
     db.commit()
     db.close()
 
@@ -299,8 +266,8 @@ def admin_panel():
         (archived,)).fetchall()
     # Little counters for the stat blocks at the top.
     counts = {s: db.execute(
-        "SELECT COUNT(*) AS n FROM letters WHERE archived=0 AND status=?", (s,)
-    ).fetchone()["n"] for s in ("pending", "approved", "rejected")}
+        "SELECT COUNT(*) FROM letters WHERE archived=0 AND status=?", (s,)
+    ).fetchone()[0] for s in ("pending", "approved", "rejected")}
     news = db.execute("SELECT * FROM announcements ORDER BY id DESC LIMIT 10").fetchall()
     return render_template("admin.html", letters=letters, counts=counts,
                            view=view, news=news)

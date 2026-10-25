@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% block title %}Offline{% endblock %}
-{% block content %}
-{# Shown by the service worker when the device has no internet #}
-<h1>You're offline</h1>
-<p class="muted">The board needs an internet connection to show live requests. Reconnect and try again.</p>
-<p><button class="btn primary" onclick="location.reload()">Retry</button></p>
-{% endblock %}

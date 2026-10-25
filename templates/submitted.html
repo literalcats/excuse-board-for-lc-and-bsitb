@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% block content %}
-<h1>Request sent</h1>
-<p>Save this code. It's the only way to check your status, because the board is anonymous.</p>
-<div class="bigcode">{{ code }}</div>
-<p><a class="btn" href="{{ url_for('board') }}">Back to board</a>
-   <a class="btn" href="{{ url_for('track') }}">Track status</a></p>
-{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Track a letter{% endblock %}
+{% block content %}
+<h1>Track my request</h1>
+<form method="post" class="form">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <label>Your code <input name="code" placeholder="EX-XXXXX" required value="{{ searched or '' }}"></label>
+  <button class="btn primary" type="submit">Check status</button>
+</form>
+
+{% if result %}
+<article class="card status-{{ result.status }}">
+  <div class="code">{{ result.code }}</div>
+  <span class="badge {{ result.status }}">{{ result.status }}</span>
+  <p>{{ result.category }}</p>
+  <p class="muted">Absent {{ result.absent_from|pretty_date }} – {{ result.absent_to|pretty_date }},
+     returning {{ result.return_date|pretty_date }}</p>
+  {% if result.status == 'approved' %}<p>Approved. Please see your admin for the signed copy.</p>{% endif %}
+</article>
+{% endif %}
+{% endblock %}
